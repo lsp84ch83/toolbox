@@ -43,7 +43,6 @@ def operate_js(js_path):
         for k, v in js_dict.items():
             try:
                 if len(k) > 1:
-                    print(f'setName("{translator.translate(k)}")')
                     js_content = js_content.replace(f'setName("{k}")', f'setName("{translator.translate(k)}")')
                     js_content = js_content.replace(f'setDesc("{v}")', f'setDesc("{translator.translate(v)}")')
                 else:
