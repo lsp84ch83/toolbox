@@ -14,6 +14,8 @@ import os
 import re
 import shutil
 import argparse
+import time
+
 import requests
 
 from translate import Translator
@@ -35,18 +37,27 @@ def operate_js(js_path):
 
     with open(js_path, 'r') as f:
         js_content = f.read()
-
-        set_names = re.findall(r'setName\((?:u\()?"([^"]+)"(?:\))?\)', js_content)
-        set_desc = re.findall(r'setDesc\((?:u\()?"([^"]+)"(?:\))?\)', js_content)
+        # 兼容 setName("Show language name") setName(u"abc's") setName('English language')
+        set_names = re.findall(r"setName\((?:u)?[\"']([^\"']+)[\"']\)", js_content)
+        set_desc = re.findall(r"setDesc\((?:u)?[\"']([^\"']+)[\"']\)", js_content)
 
         js_dict = dict(zip(set_names, set_desc))
+        a1 = 'AAA'
         for k, v in js_dict.items():
             try:
-                if len(k) > 1:
-                    js_content = js_content.replace(f'setName("{k}")', f'setName("{translator.translate(k)}")')
-                    js_content = js_content.replace(f'setDesc("{v}")', f'setDesc("{translator.translate(v)}")')
+                if contains_only_alphanumeric_space_symbols(k):
+                    if len(k) > 1:
+                        #  更新替换方法，兼容单双引号问题
+                        js_content = re.sub(r"setName\((u)?([\'\"])(.*)\2\)",
+                                            f"setName(\\1\\2{translator.translate(k)}\\2)",
+                                            js_content)
+                        js_content = re.sub(r"setDesc\((u)?([\'\"])(.*)\2\)",
+                                            f"setDesc(\\1\\2{translator.translate(v)}\\2)",
+                                            js_content)
+                    else:
+                        print(f"Skip Translation：{js_path} 待翻译文本长度不足：{k} 跳过翻译")
                 else:
-                    print(f"{js_path} 待翻译文本长度不足：{k} 跳过翻译")
+                    print(f"Pause translation：{js_path} 包含非英文内容 「{k}」，暂不翻译")
             except Exception as e:
                 print(f"错误的key：{k}")
 
@@ -73,6 +84,7 @@ def tr(content):
 def operate_js1(js_path):
     back_file(js_path)
 
+    time.sleep(3)
     with open(js_path, 'r') as f:
         js_content = f.read()
 
@@ -80,6 +92,8 @@ def operate_js1(js_path):
         set_desc = re.findall(r'setDesc\((?:u\()?"([^"]+)"(?:\))?\)', js_content)
 
         js_dict = dict(zip(set_names, set_desc))
+
+        print(js_dict)
 
         for k, v in js_dict.items():
             try:
@@ -115,7 +129,7 @@ def process_files(directory):
     if main_files:
         # 创建进程池并处理文件
         with multiprocessing.Pool() as pool:
-            pool.map(operate_js, main_files)
+            results = pool.map(operate_js, main_files)
     else:
         print("ERROR: 指定路径没有符合条件的main.js文件")
 
@@ -128,6 +142,11 @@ def parser_cli():
     parser.add_argument('-fp', '--file_path', default="./plugins", help="Obsidian Plus插件路径,默认为脚本同级目录")
 
     return parser.parse_args()
+
+
+def contains_only_alphanumeric_space_symbols(text):
+    pattern = re.compile(r'^[a-zA-Z0-9\s!"#$%&\'()*+,-./:;<=>?@\[\\\]^_`{|}~]+$')
+    return bool(re.match(pattern, text))
 
 
 if __name__ == '__main__':
