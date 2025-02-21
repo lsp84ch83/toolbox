@@ -2,7 +2,7 @@
 
 # ==========================
 # ADB/HDC 工具脚本
-# Version: v0.3
+# Version: v0.4
 # Author: lijun
 # ==========================
 
@@ -127,6 +127,19 @@ start_screen_record() {
     
 }
 
+# 投屏
+screen_projection() {
+    case $mode in
+        "adb")
+            log_info "开始投屏，按${GREEN}Control+C${RESET}键或者直接关闭投屏进行停止..."
+            scrcpy -s ${device_id} -b2M -m1024 --max-fps 15 --prefer-text
+            ;;
+        "hdc")
+            log_warning "相关 hdc 命令还未支持，官方在开发中......"
+            ;;
+    esac
+}
+
 # 截取屏幕截图
 get_screenshot() {
     local local_img_path
@@ -195,107 +208,74 @@ uninstall_app() {
 check_scrcpy() {
     if ! command -v scrcpy &>/dev/null; then
         log_info "未检测到 scrcpy，开始自动部署流程..."
-                # 系统架构检测
+        # 系统信息获取
         local system_name=$(uname -s)
         local machine_arch=$(uname -m)
-        local base_url="https://github.moeyy.xyz/https://github.com/Genymobile/scrcpy/releases/download"
-        local scrcpy_url=""
-        # 定义版本变量（方便后续升级）
         local scrcpy_version="3.1"
+        local base_url="https://github.moeyy.xyz/https://github.com/Genymobile/scrcpy/releases/download/v${scrcpy_version}"
         
-        # 智能匹配下载地址
+        # 操作系统类型映射（关键修复点）
+        case "$system_name" in
+            Darwin)  local os_type="macos"  ;;  # 将Darwin映射为macos
+            Linux)   local os_type="linux"  ;;
+            *)       log_error "不支持的操作系统：$system_name"; return 1 ;;
+        esac
+
+        # 架构验证和文件名生成
         case "$system_name" in
             Darwin)
                 case "$machine_arch" in
-                    arm64 | aarch64)
-                        scrcpy_url="${base_url}/v${scrcpy_version}/scrcpy-macos-aarch64-v${scrcpy_version}.tar.gz"
-                        ;;
-                    x86_64)
-                        scrcpy_url="${base_url}/v${scrcpy_version}/scrcpy-macos-x86_64-v${scrcpy_version}.tar.gz"
-                        ;;
-                    *)
-                        log_error "不支持的Mac架构：$machine_arch"
-                        return 1
-                        ;;
+                    arm64 | aarch64) local arch_suffix="aarch64" ;;
+                    x86_64)          local arch_suffix="x86_64" ;;
+                    *)               log_error "不支持的Mac架构：$machine_arch"; return 1 ;;
                 esac
                 ;;
             Linux)
                 case "$machine_arch" in
-                    x86_64)
-                        scrcpy_url="${base_url}/v${scrcpy_version}/scrcpy-linux-x86_64-v${scrcpy_version}.tar.gz"
-                        ;;
-                    *)
-                        log_error "不支持的Linux架构：$machine_arch"
-                        return 1
-                        ;;
+                    x86_64)          local arch_suffix="x86_64" ;;
+                    aarch64)         local arch_suffix="aarch64" ;;
+                    armv7l)          local arch_suffix="arm" ;;
+                    *)               log_error "不支持的Linux架构：$machine_arch"; return 1 ;;
                 esac
                 ;;
-            *)
-                log_error "不支持的操作系统：$system_name"
-                return 1
-                ;;
+            *) log_error "不支持的操作系统：$system_name"; return 1 ;;
         esac
-        
-        # 创建临时目录
-        local temp_dir
-        temp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t 'scrcpy_temp')
+
+        # 动态生成下载信息
+        local pkg_name="scrcpy-${os_type}-${arch_suffix}-v${scrcpy_version}.tar.gz"
+        local scrcpy_url="${base_url}/${pkg_name}"
+        local target_dir=$(dirname $(command -v adb))
+
+        # 临时目录处理
+        local temp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t 'scrcpy_temp')
         trap 'rm -rf "$temp_dir"' EXIT
-        
-        # 下载地址配置（可替换镜像源）
-        local scrcpy_url="https://github.moeyy.xyz/https://github.com/Genymobile/scrcpy/releases/download/v3.1/scrcpy-macos-aarch64-v3.1.tar.gz"
-        local scrcpy_tar="${temp_dir}/scrcpy.tar.gz"
-        
-        # 下载文件
-        log_info "开始下载 scrcpy (v3.1 macos aarch64)..."
-        if ! curl -L "$scrcpy_url" -o "$scrcpy_tar" --progress-bar; then
-            log_error "下载失败，请检查网络连接"
+
+        # 下载流程
+        log_info "下载 scrcpy v${scrcpy_version} (${system_name} ${machine_arch})..."
+        if ! curl -L "$scrcpy_url" -o "${temp_dir}/${pkg_name}" --progress-bar; then
+            log_error "下载失败，请检查：\n1. 网络连接\n2. 镜像源状态\n3. 版本是否存在"
             return 1
         fi
-        
-        # 验证文件完整性
-        if ! tar tf "$scrcpy_tar" &> /dev/null; then
-            log_error "文件损坏，请重新下载"
-            return 1
-        fi
-        
-        # 解压文件
-        log_info "正在解压安装包..."
-        tar -xzf "$scrcpy_tar" -C "$temp_dir" || {
-            log_error "解压失败，请检查磁盘空间"
+
+        # 解压流程
+        log_info "正在部署到ADB目录：${target_dir}"
+        sudo tar -xzf "${temp_dir}/${pkg_name}" -C "$target_dir" \
+            --strip-components=1 \
+            --exclude=*.bat \
+            --exclude=README.md 2>/dev/null || {
+            log_error "解压失败，可能原因：\n1. 磁盘空间不足\n2. 权限不足\n3. 文件损坏"
             return 1
         }
-        
-        # 定位可执行文件（适配新版目录结构）
-        local scrcpy_bin
-        scrcpy_bin=$(find "$temp_dir" -name "scrcpy" -type f -print -quit)
-        if [[ -z "$scrcpy_bin" ]]; then
-            log_error "未找到可执行文件"
+
+        # 权限设置
+        sudo chmod +x "${target_dir}/scrcpy" || {
+            log_error "权限设置失败，请手动执行：sudo chmod +x ${target_dir}/scrcpy"
             return 1
-        fi
-        
-        # 获取adb目录
-        local adb_path target_dir
-        adb_path=$(command -v adb)
-        if [[ -z "$adb_path" ]]; then
-            log_error "未找到adb，请先安装Android Platform Tools"
-            return 1
-        fi
-        target_dir=$(dirname "$adb_path")
-        
-        # 部署文件
-        log_info "正在部署到系统目录：$target_dir"
-        if ! sudo cp "$scrcpy_bin" "$target_dir/scrcpy"; then
-            log_error "权限不足，请手动输入密码"
-            sudo cp "$scrcpy_bin" "$target_dir/scrcpy" || {
-                log_error "部署失败，请尝试手动安装"
-                return 1
-            }
-        fi
-        
-        # 设置权限
-        sudo chmod +x "$target_dir/scrcpy"
-        log_success "scrcpy 部署成功！"
-        
+        }
+        log_info "清理临时目录..."
+        rm -rf ${temp_dir}
+        log_success "scrcpy 部署成功！版本：$(scrcpy --version 2>&1 | head -1)"
+
     else
         log_info "scrcpy 已安装：$(which scrcpy)"
     fi
@@ -310,9 +290,9 @@ main_menu() {
         echo -e "${BLUE}======= ADB/HDC 工具箱 =======${RESET}"
         echo -e "1) 显示当前可用设备\t2) 显示设备信息"
         echo -e "3) 获取当前活动信息\t4) 获取设备应用列表"
-        echo -e "5) 清理应用缓存\t\t6) 安装应用"
-        echo -e "7) 屏幕截图\t\t8) 录屏"
-        echo -e "9) 卸载应用"
+        echo -e "5) 清理应用缓存\t\t6) 屏幕截图"
+        echo -e "7) 安装应用\t\t8) 卸载应用"
+        echo -e "9) 录屏\t\t\t0) 投屏"
 
         echo -e "${RED}x) 退出脚本${RESET}"
         echo -e -n "${YELLOW}请选择操作：${RESET} "
@@ -327,16 +307,18 @@ main_menu() {
                 read -rp "请输入要清理缓存的包名： " package_name
                 clean_app "$package_name"
                 ;;
-            6)
+            6) log_info "截取当前屏幕..."; get_screenshot ;;
+            7)
                 read -rp "请输入 APK 文件路径： " apk_path
                 install_app "$apk_path"
                 ;;
-            7) log_info "截取当前屏幕..."; get_screenshot ;;
-            8) log_info "即将录屏..."; start_screen_record;;
-            9)
+            8)
                 read -rp "请输入要卸载的包名： " package_name
                 uninstall_app "$package_name"
                 ;;
+            9) log_info "即将录屏..."; start_screen_record;;
+            0) log_info "开始投屏..."; screen_projection;;
+
             x)  
                 log_info "退出脚本，感谢使用！"; exit 0 ;;
             *)  
