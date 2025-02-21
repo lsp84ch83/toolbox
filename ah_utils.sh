@@ -2,7 +2,7 @@
 
 # ==========================
 # ADB/HDC 工具脚本
-# Version: v0.4
+# Version: v0.5
 # Author: lijun
 # ==========================
 
@@ -17,6 +17,7 @@ RESET="\033[0m"
 # 全局变量
 mode=""
 device_id=""
+
 
 # 通用函数
 log_info() { echo -e "${BLUE}[INFO]${RESET} $1"; }
@@ -65,6 +66,11 @@ select_device() {
         done
     fi
     echo -e "${GREEN}当前选择的设备：$device_id${RESET}"
+    if [ "$mode" == "adb" ]; then
+        wifi_ip=$(adb -s "$device_id" shell "dumpsys wifi | grep -A10 'mWifiInfo' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1" 2>/dev/null)
+    elif [ "$mode" == "hdc" ]; then
+        wifi_ip=$(hdc shell "ifconfig wlan0 | grep 'inet addr:' | sed 's/.*addr:\([0-9.]*\).*/\1/'" 2>/dev/null)
+    fi
 }
 
 # 获取设备信息
@@ -76,7 +82,6 @@ get_device_info() {
         system_name=$(adb -s "$device_id" shell getprop ro.build.version.release 2>/dev/null)
         udid="$device_id"
         wm_size=$(adb -s "$device_id" shell wm size | awk -F': ' '{print $2}' 2>/dev/null)
-        wifi_ip=$(adb -s "$device_id" shell "dumpsys wifi | grep -A10 'mWifiInfo' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1" 2>/dev/null)
     elif [ "$mode" == "hdc" ]; then
         system_name=$(hdc -t "$device_id" shell param get const.product.software.version 2>/dev/null)
         udid=$(hdc -t "$device_id" shell bm get --udid | sed 's/udid of current device is ://')
@@ -131,7 +136,7 @@ start_screen_record() {
 screen_projection() {
     case $mode in
         "adb")
-            log_info "开始投屏，按${GREEN}Control+C${RESET}键或者直接关闭投屏进行停止..."
+            log_info "开始投屏，按${GREEN}Control+C${RESET}键或者${GREEN}直接关闭${RESET}投屏进行停止..."
             scrcpy -s ${device_id} -b2M -m1024 --max-fps 15 --prefer-text
             ;;
         "hdc")
@@ -281,6 +286,104 @@ check_scrcpy() {
     fi
 }
 
+# 无线连接切换功能
+toggle_wireless_connection() {
+    if [ "$mode" == "adb" ]; then
+        # 获取当前连接设备中的无线设备数量
+        local wireless_list=$(adb devices | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+')
+        
+        # 判断连接状态并确认操作
+        if [[ -n "$wireless_list" ]]; then
+            # 当前有无线连接时关闭
+            read -rp $'\n检测到无线连接，是否要断开？(y/n) ' confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                adb disconnect ${wireless_list%%:*}:5555 >/dev/null 2>&1
+                log_success "无线连接已断开"
+            else
+                log_info "已取消操作"
+            fi
+        else
+            # 无线连接初始化流程
+            read -rp $'\n当前为USB连接，是否切换为无线连接？(y/n) ' confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                # 检查USB设备有效性
+                if [ -z "$device_id" ]; then
+                    log_error "未检测到有效USB设备"
+                    return 1
+                fi
+                
+                log_info "正在建立无线连接..."
+                
+                # 获取设备IP（优先用已缓存的wifi_ip）
+                local target_ip=${wifi_ip:-$(adb -s "$device_id" shell "dumpsys wifi | grep 'mWifiInfo' | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}'" 2>/dev/null)}
+                
+                # 确保IP有效性
+                if [[ ! "$target_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    log_error "无法自动获取IP地址，请手动输入："
+                    read -r target_ip
+                fi
+                
+                # 切换TCP模式+连接
+                if adb -s "$device_id" tcpip 5555 | grep -q "restarting"; then
+                    sleep 3 # 等待端口开放
+                    if adb connect "${target_ip}:5555" | grep -q "connected"; then
+                        log_success "无线连接成功: ${target_ip}:5555"
+                        device_id="${target_ip}:5555" # 更新当前设备ID
+                    else
+                        log_error "连接失败，请检查：\n1.设备与电脑需在同一网络\n2.防火墙允许5555端口"
+                    fi
+                else
+                    log_error "TCP模式切换失败，请检查USB调试权限"
+                fi
+            else
+                log_info "已取消操作"
+            fi
+        fi
+    # elif [ "$mode" == "hdc" ]; then
+    #     # █████████████████████ HDC新增逻辑 因无法像ADB一样断开无线连接，暂时不用 █████████████████████
+    #     local tmode_port=6666
+
+    #     # 获取当前连接状态
+    #     local conn_status=$(hdc list targets -v | grep -v -F "[Empty]"| awk '! /Offline/ && NF >=3'| grep -v "^$" | cut -d' ' -f1| awk '{print $2}' )
+        
+    #     if [ "$conn_status" == "USB" ]; then
+    #         # USB转无线流程
+    #         read -rp $'\n当前为USB连接，是否切换为无线连接？(y/n) ' confirm
+    #         if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    #             # 获取设备IP
+    #             local target_ip=${wifi_ip:-$(hdc shell "ifconfig wlan0 | grep 'inet addr:' | sed 's/.*addr:\([0-9.]*\).*/\1/'" 2>/dev/null)}
+    #             if [[ ! "$target_ip" =~ ^[0-9]+\. ]]; then
+    #                 log_error "无法自动获取IP地址，请手动输入："
+    #                 read -r target_ip
+    #             fi
+                
+    #             # 开启TCP模式
+    #             if hdc -t "$device_id" tmode port ${tmode_port} | grep -q "successful"; then
+    #                 sleep 2
+    #                 # 无线连接
+    #                 if hdc -t ${device_id} tconn "${target_ip}:${tmode_port}" | grep -q "OK"; then
+    #                     log_success "无线连接成功: ${target_ip}:${tmode_port}"
+    #                     # device_id="${target_ip}:${tmode_port}"
+    #                 else
+    #                     log_error "连接失败，请检查：\n1.设备与电脑需在同一网络\n2.防火墙允许${tmode_port}端口"
+    #                 fi
+    #             else
+    #                 log_error "TCP模式切换失败，请检查HDC权限"
+    #             fi
+    #         fi
+            
+    #     elif [ "$conn_status" == "TCP" ]; then
+    #         # 无线转USB流程
+    #         read -rp $'\n检测到无线连接，是否要断开？(y/n) ' confirm
+    #         if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    #             hdc -t "$device_id" tmode usb >/dev/null 2>&1
+    #             log_success "无线连接已断开"
+    #         fi
+    #     # fi
+    else
+        log_warning "HDC暂不支持无线连接"
+    fi
+}
 
 
 # 主菜单
@@ -289,10 +392,11 @@ main_menu() {
         echo ""
         echo -e "${BLUE}======= ADB/HDC 工具箱 =======${RESET}"
         echo -e "1) 显示当前可用设备\t2) 显示设备信息"
-        echo -e "3) 获取当前活动信息\t4) 获取设备应用列表"
+        echo -e "3) 获取活动页信息\t4) 获取设备应用列表"
         echo -e "5) 清理应用缓存\t\t6) 屏幕截图"
         echo -e "7) 安装应用\t\t8) 卸载应用"
         echo -e "9) 录屏\t\t\t0) 投屏"
+        echo -e "10) 无线连接"
 
         echo -e "${RED}x) 退出脚本${RESET}"
         echo -e -n "${YELLOW}请选择操作：${RESET} "
@@ -318,6 +422,7 @@ main_menu() {
                 ;;
             9) log_info "即将录屏..."; start_screen_record;;
             0) log_info "开始投屏..."; screen_projection;;
+            10) log_info "\n"; toggle_wireless_connection;;
 
             x)  
                 log_info "退出脚本，感谢使用！"; exit 0 ;;
