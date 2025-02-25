@@ -2,7 +2,7 @@
 
 # ==========================
 # ADB/HDC 工具脚本
-# Version: v0.5
+# Version: v1.0
 # Author: lijun
 # ==========================
 
@@ -136,8 +136,9 @@ start_screen_record() {
 screen_projection() {
     case $mode in
         "adb")
-            log_info "开始投屏，按${GREEN}Control+C${RESET}键或者${GREEN}直接关闭${RESET}投屏进行停止..."
-            scrcpy -s ${device_id} -b2M -m1024 --max-fps 15 --prefer-text
+            scrcpy -s ${device_id} -b2M -m1024 --max-fps 15 --prefer-text > /dev/null 2>&1 &
+            scrcpy_pid=$!
+            log_info "投屏进程已在后台运行,执行${GREEN}kill -9 $scrcpy_pid${RESET} 或者直接${GREEN}关闭投屏镜像${RESET}进行停止..."
             ;;
         "hdc")
             log_warning "相关 hdc 命令还未支持，官方在开发中......"
@@ -396,7 +397,7 @@ main_menu() {
         echo -e "5) 清理应用缓存\t\t6) 屏幕截图"
         echo -e "7) 安装应用\t\t8) 卸载应用"
         echo -e "9) 录屏\t\t\t0) 投屏"
-        echo -e "10) 无线连接"
+        echo -e "10) 无线模式"
 
         echo -e "${RED}x) 退出脚本${RESET}"
         echo -e -n "${YELLOW}请选择操作：${RESET} "
@@ -422,7 +423,7 @@ main_menu() {
                 ;;
             9) log_info "即将录屏..."; start_screen_record;;
             0) log_info "开始投屏..."; screen_projection;;
-            10) log_info "\n"; toggle_wireless_connection;;
+            10) log_info "设置无线模式..."; toggle_wireless_connection;;
 
             x)  
                 log_info "退出脚本，感谢使用！"; exit 0 ;;
