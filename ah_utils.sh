@@ -1,10 +1,15 @@
 #!/bin/bash
 
 # ==========================
-# ADB/HDC 工具脚本
-# Version: v1.0
+# ADB/HDC/IOS 工具脚本
+# Version: v1.0.5
 # Author: lijun
 # ==========================
+
+# 脚本元信息
+TOOL_TITLE="❖  ADB/HDC/IOS 工具箱  ❖"
+TOOL_VERSION="v1.0.5"
+AUTHOR_NAME="lijun"
 
 # 定义颜色
 RED="\033[31m"
@@ -32,182 +37,6 @@ check_command() {
         log_error "$tool 命令未找到，请确保已正确安装并添加到 PATH 环境变量中。"
         exit 1
     fi
-}
-
-# 列出设备
-list_devices() {
-    if [ "$mode" == "adb" ]; then
-        adb devices | grep -v "List of devices attached" | grep "device$" | awk '{print $1}'
-    elif [ "$mode" == "hdc" ]; then
-        hdc list targets | grep -v -F "[Empty]" | grep -v "^$" | cut -d' ' -f1
-    fi
-}
-
-# 选择设备
-select_device() {
-    devices=$(list_devices)
-    if [ -z "$devices" ]; then
-        log_error "未检测到任何设备，请检查设备连接或授权。"
-        exit 1
-    fi
-
-    device_count=$(echo "$devices" | wc -w)
-    if [ "$device_count" -eq 1 ]; then
-        device_id=$(echo "$devices" | head -n 1)
-    else
-        echo "检测到多个设备，请选择一个设备："
-        select device in $devices; do
-            if [ -n "$device" ]; then
-                device_id="$device"
-                break
-            else
-                log_warning "无效选择，请重试。"
-            fi
-        done
-    fi
-    echo -e "${GREEN}当前选择的设备：$device_id${RESET}"
-    if [ "$mode" == "adb" ]; then
-        wifi_ip=$(adb -s "$device_id" shell "dumpsys wifi | grep -A10 'mWifiInfo' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1" 2>/dev/null)
-    elif [ "$mode" == "hdc" ]; then
-        wifi_ip=$(hdc shell "ifconfig wlan0 | grep 'inet addr:' | sed 's/.*addr:\([0-9.]*\).*/\1/'" 2>/dev/null)
-    fi
-}
-
-# 获取设备信息
-get_device_info() {
-    local system_name
-    local udid
-
-    if [ "$mode" == "adb" ]; then
-        system_name=$(adb -s "$device_id" shell getprop ro.build.version.release 2>/dev/null)
-        udid="$device_id"
-        wm_size=$(adb -s "$device_id" shell wm size | awk -F': ' '{print $2}' 2>/dev/null)
-    elif [ "$mode" == "hdc" ]; then
-        system_name=$(hdc -t "$device_id" shell param get const.product.software.version 2>/dev/null)
-        udid=$(hdc -t "$device_id" shell bm get --udid | sed 's/udid of current device is ://')
-    fi
-
-    system_name=${system_name:-未知}
-    echo -e "${CYAN}UDID:${RESET} $udid"
-    echo -e "${CYAN}Android版本:${RESET} $system_name"
-    echo -e "${CYAN}屏幕尺寸:${RESET} $wm_size"
-    echo -e "${CYAN}wifi地址:${RESET} $wifi_ip"
-}
-
-# 获取应用列表
-get_device_app_list() {
-    if [ "$mode" == "adb" ]; then
-        adb -s "$device_id" shell pm list packages | sed 's/package://g'
-    elif [ "$mode" == "hdc" ]; then
-        hdc -t "$device_id" shell bm dump -a | grep -v "^ID:"
-    fi
-}
-
-# 获取当前活动信息
-get_app_activity() {
-    if [ "$mode" == "adb" ]; then
-        # adb -s "$device_id" shell dumpsys activity | grep "mResumedActivity"
-        adb -s "$device_id" shell dumpsys window | grep "mCurrentFocus"
-    elif [ "$mode" == "hdc" ]; then
-        hdc -t "$device_id" shell aa dump -l
-    fi
-}
-
-# 录屏功能
-start_screen_record() {
-    local device_path time_str
-    
-    local_vedio_path="$HOME/Downloads"
-    time_str=$(date +%Y%m%d_%H%M%S)
-    case $mode in
-        "adb")
-            log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
-            scrcpy --no-audio-playback --no-window -m 1080 -b 2M --max-fps=15 -r "$local_vedio_path/$time_str.mp4"
-            open $local_vedio_path
-            ;;
-        "hdc")
-            log_warning "相关 hdc 命令还未支持，官方在开发中......"
-            ;;
-    esac
-    
-}
-
-# 投屏
-screen_projection() {
-    case $mode in
-        "adb")
-            scrcpy -s ${device_id} -b2M -m1024 --max-fps 15 --prefer-text > /dev/null 2>&1 &
-            scrcpy_pid=$!
-            log_info "投屏进程已在后台运行,执行${GREEN}kill -9 $scrcpy_pid${RESET} 或者直接${GREEN}关闭投屏镜像${RESET}进行停止..."
-            ;;
-        "hdc")
-            log_warning "相关 hdc 命令还未支持，官方在开发中......"
-            ;;
-    esac
-}
-
-# 截取屏幕截图
-get_screenshot() {
-    local local_img_path
-
-    if [ "$mode" == "adb" ]; then
-        local_img_path="$HOME/Downloads/screenshot_$(date +%Y%m%d%H%M%S).png"
-        adb -s "$device_id" shell screencap -p /sdcard/screenshot.png
-        adb -s "$device_id" pull /sdcard/screenshot.png "$local_img_path"
-        adb -s "$device_id" shell rm /sdcard/screenshot.png
-    elif [ "$mode" == "hdc" ]; then
-        data_img_path=$(hdc -t "$device_id" shell snapshot_display 2>/dev/null | sed -n 's/.*write to \(\/data\/.*.jpg\).*/\1/p')
-        local_img_path="$HOME/Downloads/$(basename "$data_img_path")"
-        hdc -t "$device_id" file recv "$data_img_path" "$local_img_path" >/dev/null
-    fi
-
-    echo -e "${CYAN}截图保存到:${RESET} $local_img_path"
-    open $HOME/Downloads
-}
-
-# 清理应用缓存
-clean_app() {
-    local package_name=$1
-
-    if [ "$mode" == "adb" ]; then
-        adb -s "$device_id" shell pm clear "$package_name"
-    elif [ "$mode" == "hdc" ]; then
-        hdc -t "$device_id" shell bm clean -n "$package_name" -c 2>/dev/null
-    fi
-    log_success "已清理应用缓存：$package_name"
-}
-
-# 安装应用
-install_app() {
-    local apk_path=$1
-
-    if [ ! -f "$apk_path" ]; then
-        log_error "APK 文件 $apk_path 不存在，请检查路径是否正确。"
-        return
-    fi
-
-    if [ "$mode" == "adb" ]; then
-        adb -s "$device_id" push "$apk_path" "/data/local/tmp/"
-        adb -s "$device_id" shell pm install "/data/local/tmp/$(basename "$apk_path")"
-        adb -s "$device_id" shell rm "/data/local/tmp/$(basename "$apk_path")"
-    elif [ "$mode" == "hdc" ]; then
-        hdc -t "$device_id" install "$apk_path"
-    fi
-
-    log_success "应用安装完成！"
-}
-
-# 卸载应用
-uninstall_app() {
-    local package_name=$1
-
-    if [ "$mode" == "adb" ]; then
-        adb -s "$device_id" uninstall "$package_name"
-    elif [ "$mode" == "hdc" ]; then
-        hdc -t "$device_id" uninstall "$package_name"
-    fi
-
-    log_success "应用 $package_name 已卸载。"
 }
 
 # 检查/配置scrcpy (增强下载版)
@@ -286,6 +115,255 @@ check_scrcpy() {
         log_info "scrcpy 已安装：$(which scrcpy)"
     fi
 }
+
+
+# 检查并初始化
+check_python() {
+    # 检测 Python3 是否存在
+    if ! command -v python3 &>/dev/null; then
+        log_error "未检测到 Python3 环境，请按以下步骤操作：\n1. 访问 https://www.python.org/downloads/ 安装 Python3\n2. 确保 python3 已加入 PATH 环境变量"
+        exit 1
+    fi
+    # 创建虚拟环境目录
+    VENV_DIR="$HOME/venv/ios_tools"
+    if [ ! -d "$VENV_DIR" ]; then
+        log_info "正在初始化环境..."
+        python3 -m venv "$VENV_DIR" || {
+            log_error "虚拟环境创建失败，请检查磁盘权限或空间"
+            exit 1
+        }
+        pypi_url="-i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://mirrors.aliyun.com/pypi/simple"
+        # 安装依赖库
+        log_info "安装依赖组件(首次安装大约3分钟)..."
+        "$VENV_DIR/bin/pip" install --upgrade pip wheel ${pypi_url} >/dev/null 2>&1
+        if ! "$VENV_DIR/bin/pip" install tidevice tidevice3 ${pypi_url} >/dev/null 2>&1; then
+            log_error "依赖库安装失败，请检查网络连接或镜像源配置"
+            exit 1
+        fi
+        log_success "环境初始化完成"
+    fi
+    echo "加载环境..."
+    source $VENV_DIR/bin/activate
+    
+}
+
+# 列出设备
+list_devices() {
+    if [ "$mode" == "adb" ]; then
+        adb devices | grep -v "List of devices attached" | grep "device$" | awk '{print $1}'
+    elif [ "$mode" == "hdc" ]; then
+        hdc list targets | grep -v -F "[Empty]" | grep -v "^$" | cut -d' ' -f1
+    elif [ $"$mode" == "ios" ]; then
+        tidevice list | grep "USB$" | awk '{print $1}'
+    fi
+}
+
+# 选择设备
+select_device() {
+    devices=$(list_devices)
+    if [ -z "$devices" ]; then
+        log_error "未检测到任何设备，请检查设备连接或授权。"
+        exit 1
+    fi
+
+    device_count=$(echo "$devices" | wc -w)
+    if [ "$device_count" -eq 1 ]; then
+        device_id=$(echo "$devices" | head -n 1)
+    else
+        echo "检测到多个设备，请选择一个设备："
+        select device in $devices; do
+            if [ -n "$device" ]; then
+                device_id="$device"
+                break
+            else
+                log_warning "无效选择，请重试。"
+            fi
+        done
+    fi
+    echo -e "${GREEN}当前选择的设备：$device_id${RESET}"
+    if [ "$mode" == "adb" ]; then
+        wifi_ip=$(adb -s "$device_id" shell "dumpsys wifi | grep -A10 'mWifiInfo' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1" 2>/dev/null)
+    elif [ "$mode" == "hdc" ]; then
+        wifi_ip=$(hdc shell "ifconfig wlan0 | grep 'inet addr:' | sed 's/.*addr:\([0-9.]*\).*/\1/'" 2>/dev/null)
+    fi
+}
+
+# 获取设备信息
+get_device_info() {
+    local system_name
+    local udid
+
+    if [ "$mode" == "adb" ]; then
+        system_name=$(adb -s "$device_id" shell getprop ro.build.version.release 2>/dev/null)
+        udid="$device_id"
+        wm_size=$(adb -s "$device_id" shell wm size | awk -F': ' '{print $2}' 2>/dev/null)
+    elif [ "$mode" == "hdc" ]; then
+        system_name=$(hdc -t "$device_id" shell param get const.product.software.version 2>/dev/null)
+        udid=$(hdc -t "$device_id" shell bm get --udid | sed 's/udid of current device is ://')
+    elif [ $"$mode" == "ios" ]; then
+        udid="$device_id"
+        iphone_name=$(tidevice -u ${device_id} info | grep "MarketName" | awk -F':[[:space:]]+' '{print $2}' 2>/dev/null)
+        system_version=$(tidevice -u ${device_id} info | grep "ProductVersion" | awk -F':[[:space:]]+' '{print $2}' 2>/dev/null)
+        product_type=$(tidevice -u ${device_id} info | grep "ProductType" | awk -F':[[:space:]]+' '{print $2}' 2>/dev/null)
+    fi
+
+    if [ "$mode" == "ios" ]; then
+
+        echo -e "${CYAN}NAME:${RESET} ${iphone_name:-未知}"
+        echo -e "${CYAN}UDID:${RESET} ${udid:-未知}"
+        echo -e "${CYAN}版本:${RESET} ${system_version:-未知}"
+        echo -e "${CYAN}产品类型:${RESET} ${product_type:-未知}"
+    else 
+        system_name=${system_name:-未知}
+        echo -e "${CYAN}UDID:${RESET} $udid"
+        echo -e "${CYAN}Android版本:${RESET} $system_name"
+        echo -e "${CYAN}屏幕尺寸:${RESET} $wm_size"
+        echo -e "${CYAN}wifi地址:${RESET} $wifi_ip"
+    fi
+    
+}
+
+# 获取应用列表
+get_device_app_list() {
+    if [ "$mode" == "adb" ]; then
+        adb -s "$device_id" shell pm list packages | sed 's/package://g'
+    elif [ "$mode" == "hdc" ]; then
+        hdc -t "$device_id" shell bm dump -a | grep -v "^ID:"
+    elif [ $"$mode" == "ios" ]; then
+        tidevice -u ${device_id} applist
+    fi
+}
+
+# 获取当前活动信息
+get_app_activity() {
+    if [ "$mode" == "adb" ]; then
+        # adb -s "$device_id" shell dumpsys activity | grep "mResumedActivity"
+        adb -s "$device_id" shell dumpsys window | grep "mCurrentFocus"
+    elif [ "$mode" == "hdc" ]; then
+        hdc -t "$device_id" shell aa dump -l
+    elif [ $"$mode" == "ios" ]; then
+        log_warning "暂未实现"
+    fi
+}
+
+# 录屏功能
+start_screen_record() {
+    local device_path time_str
+    
+    local_vedio_path="$HOME/Downloads"
+    time_str=$(date +%Y%m%d_%H%M)
+    case $mode in
+        "adb")
+            log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
+            scrcpy -s ${device_id} --no-audio-playback --no-window -m 1080 -b 2M --max-fps=15 -r "$local_vedio_path/Android_$time_str.mp4"
+            open $local_vedio_path
+            ;;
+        "hdc")
+            log_warning "相关 hdc 命令还未支持，官方在开发中......"
+            ;;
+        "ios")
+            log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
+            t3 -u ${device_id} screenrecord "$local_vedio_path/IOS_$time_str.mp4"
+            open $local_vedio_path
+            ;;
+    esac
+    
+}
+
+# 投屏
+screen_projection() {
+    case $mode in
+        "adb")
+            scrcpy -s ${device_id} -K -t -b2M --max-fps 15 > /dev/null 2>&1 &
+            scrcpy_pid=$!
+            log_info "投屏进程已在后台运行,执行${GREEN}kill -9 $scrcpy_pid${RESET} 或者直接${GREEN}关闭投屏镜像${RESET}进行停止..."
+            ;;
+        "hdc")
+            log_warning "相关 hdc 命令还未支持，官方在开发中......"
+            ;;
+        "ios")
+            log_warning "暂未实现"
+            ;;
+    esac
+}
+
+# 截取屏幕截图
+get_screenshot() {
+    local local_img_path
+
+    if [ "$mode" == "adb" ]; then
+        local_img_path="$HOME/Downloads/android_$(date +%Y%m%d%H%M%S).png"
+        adb -s "$device_id" shell screencap -p /sdcard/screenshot.png
+        adb -s "$device_id" pull /sdcard/screenshot.png "$local_img_path"
+        adb -s "$device_id" shell rm /sdcard/screenshot.png
+    elif [ "$mode" == "hdc" ]; then
+        data_img_path=$(hdc -t "$device_id" shell snapshot_display 2>/dev/null | sed -n 's/.*write to \(\/data\/.*.jpg\).*/\1/p')
+        local_img_path="$HOME/Downloads/$(basename "$data_img_path")"
+        hdc -t "$device_id" file recv "$data_img_path" "$local_img_path" >/dev/null
+    elif [ $"$mode" == "ios" ]; then
+        local_img_path="$HOME/Downloads/ios_$(date +%Y%m%d%H%M%S).png"
+        tidevice -u ${device_id} screenshot ${local_img_path}
+    fi
+
+    echo -e "${CYAN}截图保存到:${RESET} $local_img_path"
+    open $HOME/Downloads
+}
+
+# 清理应用缓存
+clean_app() {
+    if [ $"$mode" == "ios" ]; then
+        log_warning "暂未实现"
+        return
+    fi
+
+    local package_name=$1
+
+    if [ "$mode" == "adb" ]; then
+        adb -s "$device_id" shell pm clear "$package_name"
+    elif [ "$mode" == "hdc" ]; then
+        hdc -t "$device_id" shell bm clean -n "$package_name" -c 2>/dev/null
+    fi
+    log_success "已清理应用缓存：$package_name"
+}
+
+# 安装应用
+install_app() {
+    local apk_path=$1
+
+    if [ ! -f "$apk_path" ]; then
+        log_error "APK 文件 $apk_path 不存在，请检查路径是否正确。"
+        return
+    fi
+
+    if [ "$mode" == "adb" ]; then
+        adb -s "$device_id" push "$apk_path" "/data/local/tmp/"
+        adb -s "$device_id" shell pm install "/data/local/tmp/$(basename "$apk_path")"
+        adb -s "$device_id" shell rm "/data/local/tmp/$(basename "$apk_path")"
+    elif [ "$mode" == "hdc" ]; then
+        hdc -t "$device_id" install "$apk_path"
+    elif [ $"$mode" == "ios" ]; then
+        tidevice -u ${device_id} install "$apk_path"
+    fi
+
+    log_success "应用安装完成！"
+}
+
+# 卸载应用
+uninstall_app() {
+    local package_name=$1
+
+    if [ "$mode" == "adb" ]; then
+        adb -s "$device_id" uninstall "$package_name"
+    elif [ "$mode" == "hdc" ]; then
+        hdc -t "$device_id" uninstall "$package_name"
+    elif [ $"$mode" == "ios" ]; then
+        tidevice -u ${device_id} uninstall "$package_name"
+    fi
+
+    log_success "应用 $package_name 已卸载。"
+}
+
+
 
 # 无线连接切换功能
 toggle_wireless_connection() {
@@ -381,17 +459,24 @@ toggle_wireless_connection() {
     #             log_success "无线连接已断开"
     #         fi
     #     # fi
-    else
+    elif [ "$mode" == "hdc" ]; then
         log_warning "HDC暂不支持无线连接"
+    elif [ $"$mode" == "ios" ]; then
+        log_warning "暂未实现"
     fi
 }
+
 
 
 # 主菜单
 main_menu() {
     while true; do
         echo ""
-        echo -e "${BLUE}======= ADB/HDC 工具箱 =======${RESET}"
+        echo -e "╔═══════════════════════════════════════════════╗"
+        echo -e "║\t\t${BLUE}${TOOL_TITLE}${RESET}\t║"
+        echo -e "║-----------------------------------------------║"
+        echo -e "║\t\t\t\tby ${AUTHOR_NAME}  ${TOOL_VERSION}║"
+        echo -e "╚═══════════════════════════════════════════════╝"
         echo -e "1) 显示当前可用设备\t2) 显示设备信息"
         echo -e "3) 获取活动页信息\t4) 获取设备应用列表"
         echo -e "5) 清理应用缓存\t\t6) 屏幕截图"
@@ -435,13 +520,15 @@ main_menu() {
 
 # 脚本入口
 echo -e "${GREEN}请选择模式：${RESET}"
-echo "1) adb 模式"
-echo "2) hdc 模式"
-read -rp "请输入数字（1 或 2）： " mode_choice
+echo "1) adb 模式(适用Android设备)"
+echo "2) hdc 模式(适用纯血鸿蒙设备)"
+echo "3) ios 模式(适用IOS设备)"
+read -rp "请输入数字（1-3）： " mode_choice
 
 case $mode_choice in
-    1) mode="adb"; check_command "adb"; check_scrcpy ;;
+    1) mode="adb"; check_command "adb"; check_scrcpy ; adb kill-server;;
     2) mode="hdc"; check_command "hdc" ;;
+    3) mode="ios"; check_python "ios" ;;
     *) log_error "无效选项，请重新运行脚本并选择有效模式！"; exit 1 ;;
 esac
 
