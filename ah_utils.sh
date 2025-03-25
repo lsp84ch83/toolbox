@@ -270,7 +270,7 @@ get_app_activity() {
 start_screen_record() {
     local device_path time_str
     
-    local_vedio_path="$save_dir/${platform_map[$mode]}_$(date +%Y%m%d%H%M%S).mp4"
+    local_vedio_path="$save_dir/$(get_platform_name "$mode")_$(date +%Y%m%d%H%M%S).mp4"
     case $mode in
         "adb")
             log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
