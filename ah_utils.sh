@@ -2,13 +2,13 @@
 
 # ==========================
 # ADB/HDC/IOS 工具脚本
-# Version: v1.0.5
+# Version: v1.1.0
 # Author: lijun
 # ==========================
 
 # 脚本元信息
 TOOL_TITLE="❖  ADB/HDC/IOS 工具箱  ❖"
-TOOL_VERSION="v1.0.5"
+TOOL_VERSION="v1.1.0"
 AUTHOR_NAME="lijun"
 
 # 定义颜色
@@ -22,13 +22,33 @@ RESET="\033[0m"
 # 全局变量
 mode=""
 device_id=""
-
+date_str=$(date "+%Y-%m-%d")
+save_dir="$HOME/Downloads/$date_str"
 
 # 通用函数
 log_info() { echo -e "${BLUE}[INFO]${RESET} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${RESET} $1"; }
 log_warning() { echo -e "${YELLOW}[WARNING]${RESET} $1"; }
 log_error() { echo -e "${RED}[ERROR]${RESET} $1"; }
+
+# 定义映射关系
+get_platform_name() {
+    case "$1" in
+        "adb") echo "Android" ;;
+        "hdc") echo "HarmonyOS" ;;
+        "ios") echo "IOS" ;;
+        *) echo "Unknown" ;;
+    esac
+}
+
+
+# 检车文件夹是否存在
+check_dir() {
+    # 确保日志目录存在
+    if [ ! -d "$save_dir" ]; then
+        mkdir -p "$save_dir" || { echo "无法创建目录"; exit 1; }
+    fi
+}
 
 # 检查工具是否有效
 check_command() {
@@ -142,7 +162,7 @@ check_python() {
         fi
         log_success "环境初始化完成"
     fi
-    echo "加载环境..."
+    echo "加载环境完成..."
     source $VENV_DIR/bin/activate
     
 }
@@ -250,23 +270,22 @@ get_app_activity() {
 start_screen_record() {
     local device_path time_str
     
-    local_vedio_path="$HOME/Downloads"
-    time_str=$(date +%Y%m%d_%H%M)
+    local_vedio_path="$save_dir/${platform_map[$mode]}_$(date +%Y%m%d%H%M%S).mp4"
     case $mode in
         "adb")
             log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
-            scrcpy -s ${device_id} --no-audio-playback --no-window -m 1080 -b 2M --max-fps=15 -r "$local_vedio_path/Android_$time_str.mp4"
-            open $local_vedio_path
+            scrcpy -s ${device_id} --no-audio-playback --no-window -m 1080 -b 2M --max-fps=15 -r "$local_vedio_path"
             ;;
         "hdc")
             log_warning "相关 hdc 命令还未支持，官方在开发中......"
+            return
             ;;
         "ios")
             log_info "开始录屏，按${GREEN}Control+C${RESET}键停止..."
-            t3 -u ${device_id} screenrecord "$local_vedio_path/IOS_$time_str.mp4"
-            open $local_vedio_path
+            t3 -u ${device_id} screenrecord --fps 4 --no-show-time "$local_vedio_path"
             ;;
     esac
+    open $save_dir
     
 }
 
@@ -290,23 +309,22 @@ screen_projection() {
 # 截取屏幕截图
 get_screenshot() {
     local local_img_path
+    local_img_path="$save_dir/$(get_platform_name "$mode")_$(date +%Y%m%d%H%M%S).png"
 
     if [ "$mode" == "adb" ]; then
-        local_img_path="$HOME/Downloads/android_$(date +%Y%m%d%H%M%S).png"
         adb -s "$device_id" shell screencap -p /sdcard/screenshot.png
         adb -s "$device_id" pull /sdcard/screenshot.png "$local_img_path"
         adb -s "$device_id" shell rm /sdcard/screenshot.png
     elif [ "$mode" == "hdc" ]; then
         data_img_path=$(hdc -t "$device_id" shell snapshot_display 2>/dev/null | sed -n 's/.*write to \(\/data\/.*.jpg\).*/\1/p')
-        local_img_path="$HOME/Downloads/$(basename "$data_img_path")"
+        local_img_path="$save_dir/$(basename "$data_img_path")"
         hdc -t "$device_id" file recv "$data_img_path" "$local_img_path" >/dev/null
     elif [ $"$mode" == "ios" ]; then
-        local_img_path="$HOME/Downloads/ios_$(date +%Y%m%d%H%M%S).png"
         tidevice -u ${device_id} screenshot ${local_img_path}
     fi
 
     echo -e "${CYAN}截图保存到:${RESET} $local_img_path"
-    open $HOME/Downloads
+    open $save_dir
 }
 
 # 清理应用缓存
@@ -476,6 +494,7 @@ main_menu() {
         echo -e "║\t\t${BLUE}${TOOL_TITLE}${RESET}\t║"
         echo -e "║-----------------------------------------------║"
         echo -e "║\t\t\t\tby ${AUTHOR_NAME}  ${TOOL_VERSION}║"
+        echo -e "║\t\t\t\t${CYAN=}当前模式：$mode${RESET}\t║"
         echo -e "╚═══════════════════════════════════════════════╝"
         echo -e "1) 显示当前可用设备\t2) 显示设备信息"
         echo -e "3) 获取活动页信息\t4) 获取设备应用列表"
@@ -484,7 +503,7 @@ main_menu() {
         echo -e "9) 录屏\t\t\t0) 投屏"
         echo -e "10) 无线模式"
 
-        echo -e "${RED}x) 退出脚本${RESET}"
+        echo -e "${RED}x) 退出脚本${RESET}\t\t${GREEN}r) 重选工具类型${RESET}"
         echo -e -n "${YELLOW}请选择操作：${RESET} "
         read -r choice
 
@@ -497,7 +516,7 @@ main_menu() {
                 read -rp "请输入要清理缓存的包名： " package_name
                 clean_app "$package_name"
                 ;;
-            6) log_info "截取当前屏幕..."; get_screenshot ;;
+            6) log_info "截取当前屏幕..."; check_dir; get_screenshot ;;
             7)
                 read -rp "请输入 APK 文件路径： " apk_path
                 install_app "$apk_path"
@@ -506,9 +525,10 @@ main_menu() {
                 read -rp "请输入要卸载的包名： " package_name
                 uninstall_app "$package_name"
                 ;;
-            9) log_info "即将录屏..."; start_screen_record;;
+            9) log_info "即将录屏..."; check_dir; start_screen_record;;
             0) log_info "开始投屏..."; screen_projection;;
             10) log_info "设置无线模式..."; toggle_wireless_connection;;
+            r) mode="";select_mode;select_device;;
 
             x)  
                 log_info "退出脚本，感谢使用！"; exit 0 ;;
@@ -518,19 +538,22 @@ main_menu() {
     done
 }
 
-# 脚本入口
-echo -e "${GREEN}请选择模式：${RESET}"
-echo "1) adb 模式(适用Android设备)"
-echo "2) hdc 模式(适用纯血鸿蒙设备)"
-echo "3) ios 模式(适用IOS设备)"
-read -rp "请输入数字（1-3）： " mode_choice
+select_mode() {
+    # 脚本入口
+    echo -e "${GREEN}请选择模式：${RESET}"
+    echo "1) adb 模式(适用Android设备)"
+    echo "2) hdc 模式(适用纯血鸿蒙设备)"
+    echo "3) ios 模式(适用IOS设备)"
+    read -rp "请输入数字（1-3）： " mode_choice
 
-case $mode_choice in
-    1) mode="adb"; check_command "adb"; check_scrcpy ; adb kill-server;;
-    2) mode="hdc"; check_command "hdc" ;;
-    3) mode="ios"; check_python "ios" ;;
-    *) log_error "无效选项，请重新运行脚本并选择有效模式！"; exit 1 ;;
-esac
+    case $mode_choice in
+        1) mode="adb"; check_command "adb"; check_scrcpy ; adb kill-server;;
+        2) mode="hdc"; check_command "hdc" ;;
+        3) mode="ios"; check_python "ios" ;;
+        *) log_error "无效选项，请重新运行脚本并选择有效模式！"; exit 1 ;;
+    esac
+}
 
+select_mode
 select_device
 main_menu
